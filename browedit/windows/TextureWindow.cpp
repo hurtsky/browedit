@@ -18,7 +18,7 @@
 #include <blib/util/FileSystem.h>
 #include <blib/ResourceManager.h>
 #include <blib/util/Profiler.h>
-#include <blib/json.h>
+#include <blib/json.hpp>
 #include <blib/wm/Menu.h>
 
 using blib::util::Log;
@@ -136,6 +136,8 @@ void TextureWindow::updateTextures(Map* map)
 {
 	blib::wm::widgets::ScrollPanel* panel = getComponent<blib::wm::widgets::ScrollPanel>("lstTextures");
 	panel->clear();
+	if (!map)
+		return;
 	for (size_t i = 0; i < map->getGnd()->textures.size(); i++)
 	{
 		SelectableImage* img = new SelectableImage(map->getGnd()->textures[i]->texture, i, this);
@@ -200,7 +202,7 @@ void TextureWindow::setDirectory(std::string directory)
 			image->y = py;
 
 			image->addClickHandler([this, it, image](int x, int y, int clickCount) {
-				blib::wm::WM::getInstance()->popupMenu = new blib::wm::Menu(blib::json::readJson("[{ \"name\" : \"Add to map\", \"type\" : \"item\" }, { \"name\" : \"Replace selected\", \"type\" : \"item\" } ]"));
+				blib::wm::WM::getInstance()->popupMenu = new blib::wm::Menu(json::parse("[{ \"name\" : \"Add to map\", \"type\" : \"item\" }, { \"name\" : \"Replace selected\", \"type\" : \"item\" } ]"));
 				blib::wm::WM::getInstance()->setPopupMenuPosition(glm::vec2(image->parent->absoluteX() + x + this->x, image->parent->absoluteY() + y + this->y + 12));
 				blib::wm::WM::getInstance()->popupMenu->setAction("Add to map", [this, it]()
 				{
@@ -412,7 +414,7 @@ void SelectableImage::draw(blib::SpriteBatch &spriteBatch, glm::mat4 matrix, bli
 	if ((selectX1 == 0 && selectX2 == 0 && selectY1 == 0 && selectY2 == 0) || textureWindow->selectedImage != index)
 		return;
 
-	blib::json::Value skin = blib::wm::WM::getInstance()->skin["list"];
+	json skin = blib::wm::WM::getInstance()->skin["list"];
 	blib::Texture* texture = blib::wm::WM::getInstance()->skinTexture;
 
 	spriteBatch.drawStretchyRect(texture, glm::translate(matrix, glm::vec3(x + selectX1, y + selectY1, 0)), skin, glm::vec2(selectX2 - selectX1, selectY2 - selectY1), glm::vec4(1, 1, 1, 0.5f));

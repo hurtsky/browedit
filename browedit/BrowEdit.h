@@ -3,7 +3,7 @@
 #include <blib/App.h>
 #include <blib/MouseListener.h>
 #include <BroLib/MapRenderer.h>
-#include <blib/json.h>
+#include <blib/json.hpp>
 #include "TranslatorTool.h"
 #include "RotateTool.h"
 #include "ScaleTool.h"
@@ -12,7 +12,7 @@
 
 namespace blib { 
 	class Texture; 
-	namespace wm { class WM; class Menu; }
+	namespace wm { class WM; class Menu; class ToggleMenuItem; }
 }
 
 class Map;
@@ -40,8 +40,6 @@ public:
 
 class BrowEdit : public blib::App, public blib::MouseListener
 {
-	blib::wm::WM* wm;
-	blib::wm::Menu* rootMenu;
 
 	enum class EditMode
 	{
@@ -57,10 +55,11 @@ class BrowEdit : public blib::App, public blib::MouseListener
 		ColorEdit,
 	};
 
+	bool stupidOlrox = false;
 	EditMode editMode;
 
-	blib::json::Value config;
-	blib::json::Value translation;
+	json config;
+	json translation;
 
 	blib::MouseState lastMouseState;
 	blib::MouseState startMouseState;
@@ -90,7 +89,7 @@ public:
 	ObjectWindow* objectWindow;
 
 
-	BrowEdit(const blib::json::Value &config, v8::Isolate* isolate);
+	BrowEdit(const json &config, v8::Isolate* isolate);
 	~BrowEdit(void);
 
 	virtual void init();
@@ -101,15 +100,14 @@ public:
 
 	virtual void draw();
 
-	void loadMap(std::string fileName, bool threaded = true);
-	void saveMap(std::string fileName);
-
 	virtual bool onScroll( int delta );
 
 
 	void setEditMode(EditMode newMode);
 
 
+	blib::wm::WM* wm;
+	blib::wm::Menu* rootMenu;
 
 	Map* map;
 	MapRenderer mapRenderer;
@@ -119,9 +117,9 @@ public:
 	int textureRot;
 	bool textureFlipH;
 	bool textureFlipV;
-	inline const blib::json::Value &getConfig() { return config; }
+	inline const json &getConfig() { return config; }
 
-
+	//object edit
 	TranslatorTool translatorTool;
 	TranslatorTool::Axis objectTranslateDirection;
 
@@ -135,7 +133,11 @@ public:
 	SelectObjectAction* selectObjectAction;
 
 	std::vector<glm::ivec2> selectLasso;
+	
+	blib::wm::ToggleMenuItem* objectModeSnapToFloor;
 
+
+	//gat
 	int activeGatTile = 0;
 	int newTextureSize = 4;
 
@@ -180,6 +182,11 @@ public:
 	void detailGatEditUpdate();
 	void gatTypeEditUpdate();
 
+	void finishObjectTransformAction(); // object edit
+	void cancelObjectTransformAction(); // object edit
+	void deleteSelectedObjects(); //object edit
+	void duplicateSelectedObjects(); //object edit
+
 	void setLightmap(float x, float y, int color, float blend);
 
 	Rsw::Model* newModel;
@@ -201,5 +208,23 @@ public:
 	int version;
 	void loadJsPlugins();
 	void lightmapEditUpdate();
+
+
+//menu
+	void setCamera(std::function<Camera*()>, const std::string &name);
+	void loadMap(std::string fileName, bool threaded = true);
+	void saveMap(std::string fileName);
+
+	void menuFileSave();
+	void menuFileSaveAs();
+	void menuFileSaveHeightmap();
+	void menuFileLoadHeightmap();
+	void menuFileExportObj();
+
+	void menuActionsLightmapCalculate();
+	void menuActionsLightmapSmooth();
+	void menuActionsLightmapUnique();
+
+	void menuActionsScaleDown();
 };
 

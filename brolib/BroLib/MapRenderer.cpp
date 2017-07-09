@@ -17,6 +17,8 @@
 #include <blib/FBO.h>
 #include <blib/Shapes.h>
 #include <blib/util/Profiler.h>
+#include <blib/math/Plane.h>
+#include <blib/math/Ray.h>
 
 using blib::util::Log;
 
@@ -35,7 +37,7 @@ MapRenderer::MapRenderer() : mouseRay(glm::vec3(0, 0,0), glm::vec3(1,0,0))
 	drawObjectGrid = true;
 	drawQuadTree = true;
 	fbo = NULL;
-	fov = 90;
+	fov = glm::radians(75.0f);
 	mouse3d = glm::vec4(0, 0, 0, -1);
 	orthoDistance = 1000;
 }
@@ -64,7 +66,7 @@ void MapRenderer::render(blib::Renderer* renderer, glm::vec2 mousePosition)
 {
 	renderer->clear(glm::vec4(0, 0, 0, 0), blib::Renderer::Color | blib::Renderer::Depth, gndRenderState);
 
-	this->resizeGl(width, height); //meh
+	this->resizeGl(width, height, 0, 0); //meh
 
 	glm::vec3 lightDirection;
 	lightDirection[0] = -glm::cos(glm::radians((float)map->getRsw()->light.longitude)) * glm::sin(glm::radians((float)map->getRsw()->light.latitude));
@@ -82,7 +84,13 @@ void MapRenderer::render(blib::Renderer* renderer, glm::vec2 mousePosition)
 
 	renderGnd(renderer);
 	renderer->unproject(mousePosition, &mouse3d, &mouseRay, cameraMatrix, projectionMatrix);
-
+	if (mouse3d.w >= 1)
+	{
+		float t = 0;
+		mouseRay.planeIntersection(blib::math::Plane(glm::vec3(0, 1, 0), 0), t);
+		glm::vec3 pos = mouseRay.origin + t * mouseRay.dir;
+		mouse3d = glm::vec4(pos, 0.5f);
+	}
 
 	if (drawTextureGrid)
 	{
@@ -286,27 +294,29 @@ void MapRenderer::render(blib::Renderer* renderer, glm::vec2 mousePosition)
 	highlightRenderState.activeShader->setUniform(HighlightShaderUniforms::projectionMatrix, projectionMatrix);
 	highlightRenderState.activeShader->setUniform(HighlightShaderUniforms::color, glm::vec4(0, 0, 0, 0));
 
-	float opacity = map->getRsw()->water.type != 4 && map->getRsw()->water.type != 6 ? 0.6f : 1.0f;
-	highlightRenderState.activeShader->setUniform(HighlightShaderUniforms::texMult, glm::vec4(1, 1, 1, opacity));
-	highlightRenderState.activeTexture[0] = waterTextures[map->getRsw()->water.type][(int)(blib::util::Profiler::getAppTime() * map->getRsw()->water.animSpeed) % waterTextures[map->getRsw()->water.type].size()];
-
+	if (map->getRsw()->water.type.value >= 0)
 	{
-		float repeatX = map->getGnd()->width / 4.0f;
-		float repeatY = map->getGnd()->height / 4.0f;
+		float opacity = map->getRsw()->water.type != 4 && map->getRsw()->water.type != 6 ? 0.6f : 1.0f;
+		highlightRenderState.activeShader->setUniform(HighlightShaderUniforms::texMult, glm::vec4(1, 1, 1, opacity));
+		highlightRenderState.activeTexture[0] = waterTextures[(int)(blib::util::Profiler::getAppTime() * map->getRsw()->water.animSpeed) % waterTextures.size()];
 
-		float waterHeight = map->getRsw()->water.height;
+		{
+			float repeatX = map->getGnd()->width / 4.0f;
+			float repeatY = map->getGnd()->height / 4.0f;
 
-		std::vector<blib::VertexP3T2> verts;
-		verts.push_back(blib::VertexP3T2(glm::vec3(0, -waterHeight, 0), glm::vec2(0, 0)));
-		verts.push_back(blib::VertexP3T2(glm::vec3(0, -waterHeight, 10 * map->getGnd()->height), glm::vec2(0, repeatY)));
-		verts.push_back(blib::VertexP3T2(glm::vec3(10 * map->getGnd()->width, -waterHeight, 0), glm::vec2(repeatX, 0)));
+			float waterHeight = map->getRsw()->water.height;
 
-		verts.push_back(blib::VertexP3T2(glm::vec3(10 * map->getGnd()->width, -waterHeight, 10 * map->getGnd()->height), glm::vec2(repeatX, repeatY)));
-		verts.push_back(blib::VertexP3T2(glm::vec3(0, -waterHeight, 10 * map->getGnd()->height), glm::vec2(0, repeatY)));
-		verts.push_back(blib::VertexP3T2(glm::vec3(10 * map->getGnd()->width, -waterHeight, 0), glm::vec2(repeatX, 0)));
-		renderer->drawTriangles(verts, highlightRenderState);
+			std::vector<blib::VertexP3T2> verts;
+			verts.push_back(blib::VertexP3T2(glm::vec3(0, -waterHeight, 0), glm::vec2(0, 0)));
+			verts.push_back(blib::VertexP3T2(glm::vec3(0, -waterHeight, 10 * map->getGnd()->height), glm::vec2(0, repeatY)));
+			verts.push_back(blib::VertexP3T2(glm::vec3(10 * map->getGnd()->width, -waterHeight, 0), glm::vec2(repeatX, 0)));
+
+			verts.push_back(blib::VertexP3T2(glm::vec3(10 * map->getGnd()->width, -waterHeight, 10 * map->getGnd()->height), glm::vec2(repeatX, repeatY)));
+			verts.push_back(blib::VertexP3T2(glm::vec3(0, -waterHeight, 10 * map->getGnd()->height), glm::vec2(0, repeatY)));
+			verts.push_back(blib::VertexP3T2(glm::vec3(10 * map->getGnd()->width, -waterHeight, 0), glm::vec2(repeatX, 0)));
+			renderer->drawTriangles(verts, highlightRenderState);
+		}
 	}
-
 
 	highlightRenderState.activeShader->setUniform(HighlightShaderUniforms::color, glm::vec4(1, 0, 0, 1));
 	highlightRenderState.activeShader->setUniform(HighlightShaderUniforms::texMult, glm::vec4(0, 0, 0, 0));
@@ -450,21 +460,6 @@ void MapRenderer::init( blib::ResourceManager* resourceManager, blib::App* app )
 	gndTileColorDirty = false;
 
 
-	for (int i = 0; i < 7; i++)
-	{
-		std::vector<blib::Texture*> textures;
-
-		for (int ii = 0; ii < 32; ii++)
-		{
-			char buf[128];
-			sprintf(buf, "data/texture/워터/water%i%02i%s", i, ii, ".jpg");
-			textures.push_back(resourceManager->getResource<blib::Texture>(buf));
-			textures.back()->setTextureRepeat(true);
-		}
-
-		waterTextures.push_back(textures);
-	}
-	
 
 	gatVbo = resourceManager->getResource<blib::VBO>();
 	gatVbo->setVertexFormat<blib::VertexP3T2>();
@@ -485,6 +480,11 @@ void MapRenderer::setMap(const Map* map)
 		gndChunks.clear();
 	}
 
+
+
+	if (!map)
+		return;
+
 	gndChunks.resize((int)ceil(map->getGnd()->height / (float)CHUNKSIZE), std::vector<GndChunk*>((int)ceil(map->getGnd()->width / (float)CHUNKSIZE), NULL));
 	for(size_t y = 0; y < gndChunks.size(); y++)
 		for(size_t x = 0; x < gndChunks[y].size(); x++)
@@ -498,6 +498,13 @@ void MapRenderer::setMap(const Map* map)
 	for (size_t i = 0; i < map->getGnd()->textures.size(); i++)
 		if (map->getGnd()->textures[i]->texture == NULL)
 			map->getGnd()->textures[i]->texture = resourceManager->getResource<blib::Texture>("data/texture/" + map->getGnd()->textures[i]->file);
+
+	updateWaterTextures();
+
+	map->getRsw()->water.type.callback = [this](const int &old, const int &newValue)
+	{
+		updateWaterTextures();
+	};
 
 }
 
@@ -768,9 +775,9 @@ void MapRenderer::renderModel(Rsw::Model* model, blib::Renderer* renderer)
 		model->matrixCache = glm::mat4();
 		model->matrixCache = glm::scale(model->matrixCache, glm::vec3(1, 1, -1));
 		model->matrixCache = glm::translate(model->matrixCache, glm::vec3(5 * map->getGnd()->width + model->position.x, -model->position.y, -10-5 * map->getGnd()->height + model->position.z));
-		model->matrixCache = glm::rotate(model->matrixCache, -model->rotation.z, glm::vec3(0, 0, 1));
-		model->matrixCache = glm::rotate(model->matrixCache, -model->rotation.x, glm::vec3(1, 0, 0));
-		model->matrixCache = glm::rotate(model->matrixCache, model->rotation.y, glm::vec3(0, 1, 0));
+		model->matrixCache = glm::rotate(model->matrixCache, -glm::radians(model->rotation.z), glm::vec3(0, 0, 1));
+		model->matrixCache = glm::rotate(model->matrixCache, -glm::radians(model->rotation.x), glm::vec3(1, 0, 0));
+		model->matrixCache = glm::rotate(model->matrixCache, glm::radians(model->rotation.y), glm::vec3(0, 1, 0));
 		model->matrixCache = glm::scale(model->matrixCache, glm::vec3(model->scale.x, -model->scale.y, model->scale.z));
 		model->matrixCache = glm::translate(model->matrixCache, glm::vec3(-model->model->realbbrange.x, model->model->realbbmin.y, -model->model->realbbrange.z));
 		model->matrixCached = true;
@@ -850,7 +857,7 @@ void MapRenderer::renderMesh(Rsm::Mesh* mesh, const glm::mat4 &matrix, RsmModelR
 
 }
 
-void MapRenderer::resizeGl(int width, int height)
+void MapRenderer::resizeGl(int width, int height, int offsetx, int offsety)
 {
 	this->width = width;
 	this->height = height;
@@ -931,9 +938,9 @@ void MapRenderer::renderObjects(blib::Renderer* renderer, bool selected)
 				o->matrixCache = glm::mat4();
 				o->matrixCache = glm::scale(o->matrixCache, glm::vec3(1, 1, -1));
 				o->matrixCache = glm::translate(o->matrixCache, glm::vec3(5 * map->getGnd()->width + o->position.x, -o->position.y, -10 - 5 * map->getGnd()->height + o->position.z));
-				o->matrixCache = glm::rotate(o->matrixCache, -o->rotation.z, glm::vec3(0, 0, 1));
-				o->matrixCache = glm::rotate(o->matrixCache, -o->rotation.x, glm::vec3(1, 0, 0));
-				o->matrixCache = glm::rotate(o->matrixCache, o->rotation.y, glm::vec3(0, 1, 0));
+				o->matrixCache = glm::rotate(o->matrixCache, -glm::radians(o->rotation.z), glm::vec3(0, 0, 1));
+				o->matrixCache = glm::rotate(o->matrixCache, -glm::radians(o->rotation.x), glm::vec3(1, 0, 0));
+				o->matrixCache = glm::rotate(o->matrixCache, glm::radians(o->rotation.y), glm::vec3(0, 1, 0));
 			//	o->matrixCache = glm::scale(o->matrixCache, glm::vec3(o->scale.x, -o->scale.y, o->scale.z));
 			//	o->matrixCache = glm::translate(o->matrixCache, glm::vec3(-o->model->realbbrange.x, model->model->realbbmin.y, -model->model->realbbrange.z));
 				o->matrixCached = true;
@@ -956,6 +963,11 @@ void MapRenderer::renderObjects(blib::Renderer* renderer, bool selected)
 			rswRenderState.activeShader->setUniform(RswShaderAttributes::ModelMatrix, o->matrixCache);
 			rswRenderState.activeShader->setUniform(RswShaderAttributes::ModelMatrix2, billboardMatrix);
 			rswRenderState.activeShader->setUniform(RswShaderAttributes::billboard, 1.0f);
+			rswRenderState.activeShader->setUniform(RswShaderAttributes::shadeType, 4);
+			rswRenderState.activeShader->setUniform(RswShaderAttributes::lightDiffuse, glm::vec3(1,1,1));
+			if (o->type == Rsw::Object::Type::Light)
+				rswRenderState.activeShader->setUniform(RswShaderAttributes::lightDiffuse, dynamic_cast<Rsw::Light*>(o)->color);
+
 			renderer->drawTriangles(verts, 6, rswRenderState);
 			rswRenderState.activeShader->setUniform(RswShaderAttributes::billboard, 0.0f);
 
@@ -971,10 +983,10 @@ void MapRenderer::renderMeshFbo(Rsm* rsm, float rotation, blib::FBO* fbo, blib::
 
 	float dist = glm::max(glm::max(rsm->realbbmax.x - rsm->realbbmin.x, rsm->realbbmax.y - rsm->realbbmin.y), rsm->realbbmax.z - rsm->realbbmin.z);
 
-	rswRenderState.activeShader->setUniform(RswShaderAttributes::ProjectionMatrix, glm::perspective(75.0f, 1.0f, 0.1f, 250.0f));
+	rswRenderState.activeShader->setUniform(RswShaderAttributes::ProjectionMatrix, glm::perspective(glm::radians(75.0f), 1.0f, 0.1f, 250.0f));
 	rswRenderState.activeShader->setUniform(RswShaderAttributes::CameraMatrix, glm::lookAt(rsm->realbbrange * glm::vec3(1, -1, 1) + glm::vec3(0, -dist/3, -dist), rsm->realbbrange * glm::vec3(1, -1, 1), glm::vec3(0, 1, 0)));
 	rswRenderState.activeShader->setUniform(RswShaderAttributes::ModelMatrix, glm::mat4());
-	rswRenderState.activeShader->setUniform(RswShaderAttributes::ModelMatrix2, glm::scale(glm::rotate(glm::mat4(), rotation, glm::vec3(0, 1, 0)), glm::vec3(1, 1, 1)));
+	rswRenderState.activeShader->setUniform(RswShaderAttributes::ModelMatrix2, glm::scale(glm::rotate(glm::mat4(), glm::radians(rotation), glm::vec3(0, 1, 0)), glm::vec3(1, 1, 1)));
 	rswRenderState.activeShader->setUniform(RswShaderAttributes::billboard, 0.0f);
 
 
@@ -990,6 +1002,25 @@ void MapRenderer::renderMeshFbo(Rsm* rsm, float rotation, blib::FBO* fbo, blib::
 
 	rswRenderState.activeFbo = oldFbo;
 	rswRenderState.activeShader->setUniform(RswShaderAttributes::ProjectionMatrix, projectionMatrix);
+}
+
+void MapRenderer::updateWaterTextures()
+{
+	Log::out << "Reloading water textures, new texture " << map->getRsw()->water.type.value << Log::newline;
+	for (auto t : waterTextures)
+		resourceManager->dispose(t);
+	waterTextures.clear();
+
+	if (map->getRsw()->water.type.value < 0)
+		return;
+
+	for (int ii = 0; ii < 32; ii++)
+	{
+		char buf[128];
+		sprintf(buf, "data/texture/워터/water%i%02i%s", map->getRsw()->water.type.value, ii, ".jpg");
+		waterTextures.push_back(resourceManager->getResource<blib::Texture>(buf));
+		waterTextures.back()->setTextureRepeat(true);
+	}
 }
 
 void MapRenderer::renderGat(blib::Renderer* renderer)
@@ -1048,3 +1079,10 @@ void MapRenderer::setShadowDirty()
 template class blib::BackgroundTask<char*>;
 
 #pragma endregion
+
+RsmModelRenderInfo::~RsmModelRenderInfo()
+{
+	for (auto t : textures)
+		blib::ResourceManager::getInstance().dispose(t);
+	textures.clear();
+}

@@ -30,7 +30,7 @@ using blib::util::Log;
 #pragma comment(lib, "wininet.lib")
 #endif
 
-void mergeConfig(blib::json::Value &config, const blib::json::Value &newConfig);
+void mergeConfig(json &config, const json &newConfig);
 
 
 #pragma comment(lib, "icui18n.lib")
@@ -54,6 +54,9 @@ public:
 	virtual void Free(void* data, size_t) { free(data); }
 };
 
+extern "C" {
+	_declspec(dllexport) DWORD NvOptimusEnablement = 0x00000001;
+}
 
 int main()
 {
@@ -121,7 +124,7 @@ int main()
 	blib::util::FileSystem::registerHandler(new blib::util::PhysicalFileSystemHandler("../blib"));
 
 	Log::out<<"Loading configuration..."<<Log::newline;
-	blib::json::Value config = blib::util::FileSystem::getJson("assets/configs/config.default.json");
+	json config = blib::util::FileSystem::getJson("assets/configs/config.default.json");
 #ifdef WIN32
 	blib::platform::win32::RegistryKey key( HKEY_CURRENT_USER, "Software\\Browedit" );
 	if( !key.exists() && !key.create() ){
@@ -133,6 +136,10 @@ int main()
 	{
 		// we ask him for his choice
 		Log::err<< "Unable to find configuration file, please type the configuration filename" << Log::newline;
+		std::vector<std::string> configs = blib::util::FileSystem::getFileList("assets/configs");
+		for (const auto &file : configs)
+			if(file[0] != '.')
+				Log::err << " - " << file << Log::newline;
 		std::getline( std::cin, configFileName );
 	}
 	value.writeString( configFileName );
@@ -141,13 +148,13 @@ int main()
 
 #else
 	Log::out<<"Loading assets/configs/config.linux.json"<<Log::newline;
-	blib::json::Value linuxConfig = blib::util::FileSystem::getJson("assets/configs/config.linux.json");
+	json linuxConfig = blib::util::FileSystem::getJson("assets/configs/config.linux.json");
 	Log::out<<"Linux config size: "<<linuxConfig.size()<<Log::newline;
 	mergeConfig(config, linuxConfig);
 #endif
 
 
-	if (config["moveconsole"].asBool())
+	if (config["moveconsole"].get<bool>())
 		blib::util::fixConsole();
 
 
@@ -183,11 +190,11 @@ int main()
 
 
 
-	void mergeConfig(blib::json::Value &config, const blib::json::Value &newConfig)
+	void mergeConfig(json &config, const json &newConfig)
 	{
 		for (auto it = newConfig.begin(); it != newConfig.end(); it++)
-			if(config.isMember(it.key()))
-				if(config[it.key()].isObject())
+			if(config.find(it.key()) != config.end())
+				if(config[it.key()].is_object())
 					mergeConfig(config[it.key()], it.value());
 				else
 					config[it.key()] = it.value();

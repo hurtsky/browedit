@@ -45,6 +45,7 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <algorithm>
 
+
 using blib::util::Log;
 
 #ifdef BLIB_WIN
@@ -52,17 +53,20 @@ using blib::util::Log;
 #endif
 
 
-BrowEdit::BrowEdit(const blib::json::Value &config, v8::Isolate* isolate) : mouseRay(glm::vec3(0,0,0), glm::vec3(1,0,0))
+BrowEdit::BrowEdit(const json &config, v8::Isolate* isolate) : mouseRay(glm::vec3(0,0,0), glm::vec3(1,0,0))
 {
 	this->config = config;
 	this->isolate = isolate;
-	if(config.isMember("language"))
-		this->translation = blib::util::FileSystem::getJson("assets/languages/" + config["language"].asString() + ".json");
+	if(config.find("language") != config.end())
+		this->translation = blib::util::FileSystem::getJson("assets/languages/" + config["language"].get<std::string>() + ".json");
 	else
 		this->translation = blib::util::FileSystem::getJson("assets/languages/english.json");
 
-	appSetup.window.setWidth((float)config["resolution"][0u].asInt());
-	appSetup.window.setHeight((float)config["resolution"][1u].asInt());
+	if (config.find("stupidolrox") != config.end())
+		stupidOlrox = config["stupidolrox"].get<bool>();
+
+	appSetup.window.setWidth((float)config["resolution"][0u].get<int>());
+	appSetup.window.setHeight((float)config["resolution"][1u].get<int>());
 	appSetup.vsync = false;
 	appSetup.icon = 0;
 	appSetup.renderer = blib::AppSetup::GlRenderer;
@@ -123,9 +127,9 @@ BrowEdit::BrowEdit(const blib::json::Value &config, v8::Isolate* isolate) : mous
 
 
 
-	appSetup.threaded = config["threadedrendering"].asBool();
-	appSetup.backgroundTasks = config["backgroundworkers"].asBool();
-	appSetup.vsync = config["vsync"].asBool();
+	appSetup.threaded = config["threadedrendering"].get<bool>();
+	appSetup.backgroundTasks = config["backgroundworkers"].get<bool>();
+	appSetup.vsync = config["vsync"].get<bool>();
 
 //	appSetup.threaded = false;
 //	appSetup.backgroundTasks = false;
@@ -165,11 +169,11 @@ void BrowEdit::init()
 {
 	std::list<blib::BackgroundTask<int>*> tasks;
 	for (size_t i = 0; i < config["data"]["grfs"].size(); i++)
-		tasks.push_back(new blib::BackgroundTask<int>(NULL, [this, i]() { blib::util::FileSystem::registerHandler(new GrfFileSystemHandler(config["data"]["grfs"][i].asString())); return 0; }));
+		tasks.push_back(new blib::BackgroundTask<int>(NULL, [this, i]() { blib::util::FileSystem::registerHandler(new GrfFileSystemHandler(config["data"]["grfs"][i].get<std::string>())); return 0; }));
 	for (blib::BackgroundTask<int>* task : tasks)
 		task->waitForTermination();
 
-	blib::util::FileSystem::registerHandler(new blib::util::PhysicalFileSystemHandler( config["data"]["ropath"].asString() ));
+	blib::util::FileSystem::registerHandler(new blib::util::PhysicalFileSystemHandler( config["data"]["ropath"].get<std::string>() ));
 
 
 	gradientBackground = resourceManager->getResource<blib::Texture>("assets/textures/gradient.png");
@@ -182,14 +186,11 @@ void BrowEdit::init()
 	addMouseListener(wm);
 	addKeyListener(wm);
 
-
 	addMouseListener(this);
-	
-
 
 	mapRenderer.init(resourceManager, this);
-	mapRenderer.fov = config["fov"].asFloat();
-	camera = new Camera();
+	mapRenderer.fov = config["fov"].get<float>();
+	camera = new ModernCamera();
 
 
 	highlightRenderState.activeShader = resourceManager->getResource<blib::Shader>("highlight");
@@ -235,142 +236,23 @@ void BrowEdit::init()
 
 	loadJsPlugins();
 
-	rootMenu->setAction("file/new", [this]()
-	{
-		new NewMapWindow(resourceManager, this);
-	});
+	rootMenu->setAction("file/new", [this]()	{	new NewMapWindow(resourceManager, this);	});
+	rootMenu->setAction("file/open", [this](){	new FileOpenWindow(resourceManager, this);	});
+	rootMenu->setAction("file/save",			std::bind(&BrowEdit::menuFileSave, this));
+	rootMenu->setAction("file/save as",			std::bind(&BrowEdit::menuFileSaveAs, this));
+	rootMenu->setAction("file/save heightmap",	std::bind(&BrowEdit::menuFileSaveHeightmap, this));
+	rootMenu->setAction("file/load heightmap",	std::bind(&BrowEdit::menuFileLoadHeightmap, this));
+	rootMenu->setAction("file/export obj",		std::bind(&BrowEdit::menuFileExportObj, this));
 
-	rootMenu->setAction("file/open", [this](){
-		new FileOpenWindow(resourceManager, this);
-	});
-
-	rootMenu->setAction("file/save", [this](){
-		MessageWindow* dialog = new MessageWindow(resourceManager, "Saving...", "Saving");
-		new blib::BackgroundTask<bool>(this, [this]()
-		{
-			if (map)
-			{
-				char prevDir[1024];
-				_getcwd(prevDir, 1024);
-				_chdir(blib::util::replace(config["data"]["ropath"].asString(), "/", "\\").c_str());
-				map->save(map->getFileName());
-				_chdir(prevDir);
-			}
-			return true;
-		}, [dialog](bool bla)
-		{
-			dialog->close();
-		});
-	});
-
-	rootMenu->setAction("file/save heightmap", [this](){
-		MessageWindow* dialog = new MessageWindow(resourceManager, "Saving...", "Saving");
-		new blib::BackgroundTask<bool>(this, [this]()
-		{
-			if (map)
-			{
-				char prevDir[1024];
-				_getcwd(prevDir, 1024);
-				_chdir(blib::util::replace(config["data"]["ropath"].asString(), "/", "\\").c_str());
-				map->saveHeightmap(map->getFileName() + ".height.png");
-				_chdir(prevDir);
-			}
-			return true;
-		}, [dialog](bool bla)	{	dialog->close();	});
-	});
-
-	rootMenu->setAction("file/load heightmap", [this](){
-		MessageWindow* dialog = new MessageWindow(resourceManager, "Saving...", "Saving");
-		new blib::BackgroundTask<bool>(this, [this]()
-		{
-			if (map)
-				map->loadHeightmap(config["data"]["ropath"].asString() + "/" + map->getFileName() + ".height.png");
-			return true;
-		}, [dialog](bool bla)	{	dialog->close();	});
-	});
-
-
-	rootMenu->setAction("Actions/Lightmaps/Calculate Lightmaps", [this]()
-	{
-		if (!map)
-			return;
-		Log::out << "Making lightmaps unique" << Log::newline;
-		map->getGnd()->makeLightmapsUnique();
-		mapRenderer.setAllDirty();
-
-		int height = map->getGnd()->height;
-		float s = 10 / 6.0f;
-		Log::out << "Making lightmap..." << Log::newline;
-		for (int x = 0; x < map->getGnd()->width; x++)
-		{
-			for (int y = 0; y < map->getGnd()->height; y++)
-			{
-				Gnd::Cube* cube = map->getGnd()->cubes[x][y];
-				int tileId = cube->tileUp;
-				if (tileId == -1)
-					continue;
-				Gnd::Tile* tile = map->getGnd()->tiles[tileId];
-				assert(tile && tile->lightmapIndex != -1);
-				Gnd::Lightmap* lightmap = map->getGnd()->lightmaps[tile->lightmapIndex];
-				for (int xx = 1; xx < 7; xx++)
-				{
-					for (int yy = 1; yy < 7; yy++)
-					{
-						int intensity = 255;
-						//todo: use proper height with raycasting
-						glm::vec3 groundPos(10 * x + s * (xx - 1), -(cube->h1 + cube->h2 + cube->h3 + cube->h4) / 4.0f, 10 * height + 10 - 10 * y - s * (yy - 1));
-						blib::math::Ray ray(groundPos, glm::vec3(-1, 1.45f, 1));
-
-
-
-						for (Rsw::Object* o : map->getRsw()->objects)
-						{
-							if (o->collides(ray))
-							{
-								intensity = 127;
-								break;
-							}
-						}
-
-
-						lightmap->data[xx + 8 * yy] = intensity;
-
-						lightmap->data[64 + 3 * (xx + 8 * yy) + 0] = 0;
-						lightmap->data[64 + 3 * (xx + 8 * yy) + 1] = 0;
-						lightmap->data[64 + 3 * (xx + 8 * yy) + 2] = 0;
-					}
-				}
-			}
-		}
-		map->getGnd()->makeLightmapBorders();
-	});
-
-
-	rootMenu->setAction("Actions/Lightmaps/Smooth Lightmaps", [this]()
-	{
-		if (!map)
-			return;
-		Log::out << "Making lightmaps unique" << Log::newline;
-		map->getGnd()->makeLightmapsUnique();
-		map->getGnd()->makeLightmapsSmooth();
-		map->getGnd()->makeLightmapBorders();
-		mapRenderer.setAllDirty();
-	});
-
-	rootMenu->setAction("Actions/Lightmaps/Unique Lightmaps", [this]()
-	{
-		if (!map)
-			return;
-		map->getGnd()->makeLightmapsUnique();
-		mapRenderer.setAllDirty();
-	});
-
-
+	rootMenu->setAction("Actions/Lightmaps/Calculate Lightmaps",	std::bind(&BrowEdit::menuActionsLightmapCalculate, this));
+	rootMenu->setAction("Actions/Lightmaps/Smooth Lightmaps",		std::bind(&BrowEdit::menuActionsLightmapSmooth, this));
+	rootMenu->setAction("Actions/Lightmaps/Unique Lightmaps",		std::bind(&BrowEdit::menuActionsLightmapUnique, this));
+	rootMenu->setAction("Actions/Scale Down",						std::bind(&BrowEdit::menuActionsScaleDown, this));
 
 
 
 	rootMenu->setAction("window/Help", [this]() { new HelpWindow(resourceManager, this);  });
-//	rootMenu->setAction("window/Map Settings", [this]() { new MapSettingsWindow(resourceManager, this); });
+	rootMenu->setAction("window/Map Settings", [this]() { new MapSettingsWindow(resourceManager, this); });
 	rootMenu->linkToggle("display/objects", &mapRenderer.drawObjects);
 	rootMenu->linkToggle("display/shadows", &mapRenderer.drawShadows);
 	rootMenu->linkToggle("display/lights", &mapRenderer.drawLights);
@@ -386,13 +268,15 @@ void BrowEdit::init()
 	rootMenu->setAction("editmode/gattype", std::bind(&BrowEdit::setEditMode, this, EditMode::GatTypeEdit));
 	rootMenu->setAction("editmode/Lightmap edit", std::bind(&BrowEdit::setEditMode, this, EditMode::LightmapEdit));
 	rootMenu->setAction("editmode/Color Edit", std::bind(&BrowEdit::setEditMode, this, EditMode::ColorEdit));
-
+	objectModeSnapToFloor = dynamic_cast<blib::wm::ToggleMenuItem*>(rootMenu->getItem("objecttools/snap height to floor"));
 
 	
 	rootMenu->setAction("objecttools/move", std::bind(&BrowEdit::setObjectEditMode, this, ObjectEditModeTool::Translate));
 	rootMenu->setAction("objecttools/scale", std::bind(&BrowEdit::setObjectEditMode, this, ObjectEditModeTool::Scale));
 	rootMenu->setAction("objecttools/rotate", std::bind(&BrowEdit::setObjectEditMode, this, ObjectEditModeTool::Rotate));
 
+	rootMenu->setAction("Camera/Modern", std::bind(&BrowEdit::setCamera, this, []() { return new ModernCamera(); }, "Modern"));
+	rootMenu->setAction("Camera/Classic", std::bind(&BrowEdit::setCamera, this, []() { return new ClassicCamera(); }, "Classic"));
 
 	setEditMode(EditMode::TextureEdit);
 
@@ -433,7 +317,7 @@ void BrowEdit::init()
 
 //	loadMap("data/c_tower1");
 #ifdef WIN32
-	loadMap("data/" + config["defaultmap"].asString());
+	loadMap("data/" + config["defaultmap"].get<std::string>());
 #else
 	loadMap("data/prontera");
 #endif
@@ -445,6 +329,8 @@ void BrowEdit::init()
 
 void BrowEdit::update( double elapsedTime )
 {
+	if (stupidOlrox)
+		std::swap(mouseState.rightButton, mouseState.middleButton);
 	if(keyState.isPressed(blib::Key::ESC))
 		running = false;
 	if (keyState.isPressed(blib::Key::ALT))
@@ -481,20 +367,7 @@ void BrowEdit::update( double elapsedTime )
 
 	if(mouseState.middleButton)
 	{
-		if(keyState.isPressed(blib::Key::SHIFT))
-		{
-			if (mouseState.clickcount == 2)
-				camera->angle = 60;
-			camera->direction += (mouseState.position.x - lastMouseState.position.x) / 2.0f;
-			camera->angle = glm::clamp(camera->angle + (mouseState.position.y - lastMouseState.position.y) / 2.0f, 0.0f, 90.0f);
-		}
-		else
-		{
-			if (mouseState.clickcount == 2)
-				camera->direction = 0;
-			camera->position -= glm::vec2(glm::vec4(mouseState.position.x - lastMouseState.position.x, mouseState.position.y - lastMouseState.position.y, 0, 0) * glm::rotate(glm::mat4(), -camera->direction, glm::vec3(0, 0, 1)));
-			camera->targetPosition = camera->position;
-		}
+		camera->handleMouse(mouseState, lastMouseState, keyState);
 	}
 	if (map)
 	{
@@ -503,32 +376,6 @@ void BrowEdit::update( double elapsedTime )
 		if (keyState.isPressed(blib::Key::Y) && keyState.isPressed(blib::Key::CONTROL) && !lastKeyState.isPressed(blib::Key::Y))
 			redo();
 
-
-/*olroxmirror		if (keyState.isPressed(blib::Key::M) && !lastKeyState.isPressed(blib::Key::M))
-		{
-			int size = map->getRsw()->objects.size();
-			for (int i = 0; i < size; i++)
-			{
-				if (map->getRsw()->objects[i]->type == Rsw::Object::Type::Model)
-				{
-					Rsw::Model* model = (Rsw::Model*)map->getRsw()->objects[i];
-					Rsw::Model* newModel = new Rsw::Model();
-					newModel->matrixCached = false;
-					newModel->name = model->name;
-					newModel->animType = model->animType;
-					newModel->animSpeed = model->animSpeed;
-					newModel->blockType = model->blockType;
-					newModel->fileName = model->fileName;
-					newModel->position = model->position;
-					newModel->rotation = model->rotation;
-					newModel->scale = model->scale;
-					newModel->rotation.y = -newModel->rotation.y;
-					newModel->position *= glm::vec3(-1, 1, 1);
-					newModel->model = map->getRsw()->getRsm(model->fileName);
-					map->getRsw()->objects.push_back(newModel);
-				}
-			}
-		}*/
 
 		if (!map->heightImportCubes.empty())
 		{
@@ -554,7 +401,9 @@ void BrowEdit::update( double elapsedTime )
 				map->heightImportCubes.clear();
 			}
 		}
-		else if (editMode == EditMode::TextureEdit)
+		
+		
+		if (editMode == EditMode::TextureEdit)
 			textureEditUpdate();
 		else if (editMode == EditMode::ObjectEdit)
 			objectEditUpdate();
@@ -581,6 +430,8 @@ void BrowEdit::update( double elapsedTime )
 	lastmouse3d = mapRenderer.mouse3d;
 	lastKeyState = keyState;
 	lastMouseState = mouseState;
+	if (stupidOlrox)
+		std::swap(mouseState.rightButton, mouseState.middleButton);
 }
 
 void BrowEdit::draw()
@@ -645,7 +496,7 @@ void BrowEdit::draw()
 
 			glm::mat4 rot;
 			rot = glm::translate(rot, glm::vec3(texCenter, 0));
-			rot = glm::rotate(rot, 90.0f * textureRot, glm::vec3(0, 0, 1));
+			rot = glm::rotate(rot, glm::radians(90.0f * textureRot), glm::vec3(0, 0, 1));
 			rot = glm::scale(rot, glm::vec3(textureFlipH ? -1 : 1, textureFlipV ? -1 : 1, 1));
 			rot = glm::translate(rot, glm::vec3(-texCenter, 0));
 
@@ -733,7 +584,7 @@ void BrowEdit::draw()
 				center /= selectCount;
 
 				if (objectEditModeTool == ObjectEditModeTool::Translate)
-					translatorTool.draw(mapRenderer.mouseRay, highlightRenderState, center, camera->getMatrix(), renderer);
+					translatorTool.draw(mapRenderer.mouseRay, highlightRenderState, center, camera->getMatrix(), renderer, objectTranslateDirection);
 				else if (objectEditModeTool == ObjectEditModeTool::Rotate)
 					rotatorTool.draw(mapRenderer.mouseRay, highlightRenderState, center, camera->getMatrix(), renderer);
 				else if (objectEditModeTool == ObjectEditModeTool::Scale)
@@ -1246,9 +1097,6 @@ void BrowEdit::draw()
 			}
 		}
 
-
-
-
 		if (!map->heightImportCubes.empty())
 		{
 			std::vector<blib::VertexP3> verts;
@@ -1320,16 +1168,43 @@ void BrowEdit::draw()
 	spriteBatch->end();
 }
 
+void BrowEdit::setCamera(std::function<Camera*()> newCamera, const std::string &name)
+{
+	auto items = this->rootMenu->getItems("Camera");
+	for (auto i : items)
+	{
+		auto ti = dynamic_cast<blib::wm::ToggleMenuItem*>(i);
+		if (ti)
+			ti->setValue(ti->name == name);
+	}
+	Camera* oldCamera = this->camera;
+	this->camera = newCamera();
+	camera->position = oldCamera->position;
+	camera->targetPosition = oldCamera->targetPosition;
+	camera->distance = oldCamera->distance;
+	camera->direction = oldCamera->direction;
+
+}
+
 void BrowEdit::loadMap(std::string fileName, bool threaded)
 {
-	if(map)
-		delete map;
-	map = NULL;
+	if (map)
+	{
+		Map* m = map;
+		map = nullptr;
+		mapRenderer.setMap(nullptr);
+		textureWindow->updateTextures(nullptr); //TODO: textures aren't loaded here yet!
+		objectWindow->updateObjects(nullptr);
+
+
+		this->runLater<bool>([m](bool b) {
+		delete m; //TODO: fix this properly
+		}, true);
+	}
 	if (threaded)
 		new blib::BackgroundTask<Map*>(this, 	[fileName] () { return new Map(fileName); }, 
 								[this] (Map* param) { map = param;
-											camera->position = glm::vec2(map->getGnd()->width*5, map->getGnd()->height*5);
-											camera->targetPosition = camera->position;
+											camera->setTarget(glm::vec2(map->getGnd()->width*5, map->getGnd()->height*5));
 											mapRenderer.setMap(map);
 											textureWindow->updateTextures(map); //TODO: textures aren't loaded here yet!
 											objectWindow->updateObjects(map);
@@ -1337,8 +1212,7 @@ void BrowEdit::loadMap(std::string fileName, bool threaded)
 	else
 	{
 		map = new Map(fileName);
-		camera->position = glm::vec2(map->getGnd()->width * 5, map->getGnd()->height * 5);
-		camera->targetPosition = camera->position;
+		camera->setTarget(glm::vec2(map->getGnd()->width * 5, map->getGnd()->height * 5));
 		mapRenderer.setMap(map);
 		textureWindow->updateTextures(map); //TODO: textures aren't loaded here yet!
 		objectWindow->updateObjects(map);

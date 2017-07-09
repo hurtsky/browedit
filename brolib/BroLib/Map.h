@@ -43,7 +43,7 @@ public:
 	bool inMap(int xx, int yy);
 	void saveHeightmap(const std::string &fileName);
 	void loadHeightmap(const std::string &fileName);
-
+	void exportObj(const std::string &fileName);
 
 	float heightImportMin;
 	float heightImportMax;
@@ -51,4 +51,5 @@ public:
 
 
 	glm::vec4 getHeightsAt(int x, int y);
+	float getHeightAt(float x, float y);
 };

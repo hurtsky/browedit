@@ -80,7 +80,7 @@ FileOpenWindow::FileOpenWindow(blib::ResourceManager* resourceManager, BrowEdit*
 		char curdir[100];
 		_getcwd(curdir, 100);
 
-		_chdir(blib::util::replace(browEdit->getConfig()["data"]["ropath"].asString(), "/", "\\").c_str());
+		_chdir(blib::util::replace(browEdit->getConfig()["data"]["ropath"].get<std::string>(), "/", "\\").c_str());
 
 		std::string fileName = browEdit->map->getFileName() + ".rsw";
 		fileName = blib::util::replace(fileName, "/", "\\");
@@ -109,6 +109,16 @@ bool FileOpenWindow::filter(blib::Key key)
 	if (key == blib::Key::ENTER)
 	{
 		open();
+		return true;
+	}
+	if (key == blib::Key::DOWN && !lstFiles->selectedItems.empty())
+	{
+		lstFiles->selectedItems = { glm::min(lstFiles->selectedItems[0] + 1, (int)lstFiles->items.size() - 1) };
+		return true;
+	}
+	if (key == blib::Key::UP && !lstFiles->selectedItems.empty())
+	{
+		lstFiles->selectedItems = { glm::max(lstFiles->selectedItems[0] - 1, 0) };
 		return true;
 	}
 

@@ -45,6 +45,7 @@ public:
 class RsmModelRenderInfo
 {
 public:
+	~RsmModelRenderInfo();
 	std::vector<blib::Texture*> textures;
 };
 
@@ -153,7 +154,7 @@ private:
 
 	const Map* map;
 	blib::App* app;
-	std::vector<std::vector<blib::Texture*> > waterTextures;
+	std::vector<blib::Texture*> waterTextures;
 
 
 public:
@@ -192,7 +193,7 @@ public:
 	void renderModel(Rsw::Model* model, blib::Renderer* renderer);
 	void renderMesh(Rsm::Mesh* mesh, const glm::mat4 &matrix, RsmModelRenderInfo* modelInfo, blib::Renderer* renderer);
 
-	virtual void resizeGl(int width, int height);
+	virtual void resizeGl(int width, int height, int offsetx, int offsety) override;
 	void setTileDirty(int xx, int yy);
 	void setAllDirty();
 	void setShadowDirty();
@@ -201,4 +202,6 @@ public:
 	bool gndGridDirty;
 	bool gatDirty;
 
+
+	void updateWaterTextures();
 };

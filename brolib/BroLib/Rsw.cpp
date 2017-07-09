@@ -5,6 +5,7 @@
 #include <blib/util/Log.h>
 #include <blib/Util.h>
 #include <blib/linq.h>
+#include <blib/util/stb_image.h>
 using blib::util::Log;
 
 #include <blib/util/FileSystem.h>
@@ -78,6 +79,10 @@ Rsw::Rsw(const std::string &fileName, bool loadModels)
 	blib::util::StreamInFile* file = new blib::util::StreamInFile(fileName + ".rsw");
 	if (!file->opened())
 		return;
+
+
+	json extraProperties = blib::util::FileSystem::getJson(fileName + ".extra.json");
+
 	file->read(header, 4);
 	if(header[0] == 'G' && header[1] == 'R' && header[2] == 'G' && header[3] == 'W')
 	{
@@ -121,6 +126,14 @@ Rsw::Rsw(const std::string &fileName, bool loadModels)
 	light.diffuse = glm::vec3(1,1,1);
 	light.ambient = glm::vec3(0.3f,0.3f,0.3f);
 	light.intensity = 0.5f;
+
+	if (extraProperties.find("mapproperties") != extraProperties.end())
+	{
+		if (extraProperties["mapproperties"].find("lightmapAmbient") != extraProperties["mapproperties"].end())
+			light.lightmapAmbient = extraProperties["mapproperties"]["lightmapAmbient"];
+		if (extraProperties["mapproperties"].find("lightmapIntensity") != extraProperties["mapproperties"].end())
+			light.lightmapIntensity = extraProperties["mapproperties"]["lightmapIntensity"];
+	}
 
 	if(version >= 0x105)
 	{
@@ -185,8 +198,37 @@ Rsw::Rsw(const std::string &fileName, bool loadModels)
 				light->position = file->readVec3();
 				light->color = file->readVec3();
 				light->todo2 = file->readFloat();
-
 				objects.push_back(light);
+
+
+				light->range = 100;
+				light->type = Light::Type::Point;
+				light->givesShadow = true;
+				light->intensity = 20;
+				light->cutOff = 0;
+
+				if (extraProperties.is_object() && extraProperties["light"].is_array())
+				{
+					for (const json &l : extraProperties["light"])
+					{
+						if (l["id"] == i)
+						{
+							light->range = l["range"];
+							if (l["type"] == "point")
+								light->type = Light::Type::Point;
+							if (l["type"] == "spot")
+								light->type = Light::Type::Spot;
+							light->givesShadow = l["shadow"];
+							light->cutOff = l["cutoff"];
+							light->intensity = l["intensity"];
+						}
+					}
+
+
+				}
+
+
+
 			}
 			//file->readString(40 + 12 + 40 + 12 + 4);
 			break;
@@ -251,6 +293,11 @@ Rsw::~Rsw()
 void Rsw::save(const std::string &fileName)
 {
 	blib::util::PhysicalFileSystemHandler::StreamOutFilePhysical* pFile = new blib::util::PhysicalFileSystemHandler::StreamOutFilePhysical(fileName + ".rsw");
+	json extraProperties;
+	extraProperties["light"] = json();
+	extraProperties["mapproperties"]["lightmapAmbient"] = light.lightmapAmbient;
+	extraProperties["mapproperties"]["lightmapIntensity"] = light.lightmapIntensity;
+
 
 	char header[5] = "GRSW";
 	pFile->write(header, 4);
@@ -337,6 +384,18 @@ void Rsw::save(const std::string &fileName)
 			pFile->writeVec3(light->position);
 			pFile->writeVec3(light->color);
 			pFile->writeFloat(light->todo2);
+
+			json l;
+			l["id"] = i;
+			if (light->type == Light::Type::Point)
+				l["type"] = "point";
+			if (light->type == Light::Type::Spot)
+				l["type"] = "spot";
+			l["range"] = light->range;
+			l["shadow"] = light->givesShadow;
+			l["cutoff"] = light->cutOff;
+			l["intensity"] = light->intensity;
+			extraProperties["light"].push_back(l);
 		}
 			break;
 		case Object::Type::Sound://3: //Sound
@@ -379,8 +438,11 @@ void Rsw::save(const std::string &fileName)
 		pFile->writeVec3(quadtreeFloats[i]);
 
 
-
-
+	blib::util::StreamOut* out= new blib::util::PhysicalFileSystemHandler::StreamOutFilePhysical(fileName + ".extra.json");
+	std::stringstream ss;
+	ss << extraProperties;
+	out->writeLine(ss.str());
+	delete out;
 	delete pFile;
 }
 
@@ -532,6 +594,141 @@ Rsw::Model::~Model()
 }
 
 
+class Image
+{
+	unsigned char* data;
+	int width;
+	int height;
+public:
+	Image(const std::string &filename)
+	{
+		char* fileData = NULL;
+		int length = 0;
+		length = blib::util::FileSystem::getData(filename, fileData);
+		if (length <= 0)
+		{
+			Log::err << "Error loading file '" << filename << "'" << Log::newline;
+			return;
+		}
+		
+		int depth;
+		unsigned char* tmpData = stbi_load_from_memory((stbi_uc*)fileData, length, &width, &height, &depth, 3);
+		if (!tmpData)
+		{
+			const char* err = stbi_failure_reason();
+			Log::out << "Error loading file " << filename << Log::newline;
+			Log::out << err << Log::newline;
+			return;
+		}
+
+		data = new unsigned char[width*height];
+
+		for (int y = 0; y < height; y++)
+		{
+			for (int x = 0; x < width; x++)
+			{
+				data[x + width*y] = 255;
+				if (tmpData[3 * (x + width*y) + 0] > 253 &&
+					tmpData[3 * (x + width*y) + 1] < 2 &&
+					tmpData[3 * (x + width*y) + 2] > 253)
+					data[x + width*y] = 0;
+			}
+		}
+		stbi_image_free(tmpData);
+	}
+
+	float get(const glm::vec2 &uv)
+	{
+		if (!data)
+			return 1;
+		int x1 = floor(uv.x * width);
+		int y1 = floor(uv.y * height);
+		int x2 = ceil(uv.x * width);
+		int y2 = ceil(uv.y * height);
+
+#if 1
+		float fracX = glm::fract(uv.x * width);
+		float fracY = glm::fract(uv.y * height);
+
+		float top = glm::mix(data[x1 + width * y1], data[x2 + width * y1], fracX);
+		float bottom = glm::mix(data[x1 + width * y2], data[x2 + width * y2], fracX);
+		
+		return glm::mix(top, bottom, fracY) / 255.0f;
+#else
+		return ((data[x1 + width * y1] + data[x1 + width * y2] + data[x2 + width * y1] + data[x2 + width * y2]) / 4.0f) / 255.0f;
+#endif
+	}
+
+
+};
+
+#include <mutex>
+std::mutex imageMutex;
+std::map<std::string, Image*> images;
+Image* getImage(const std::string &filename)
+{
+	imageMutex.lock();
+	if (images.find(filename) == images.end())
+		images[filename] = new Image(filename);
+	Image* ret = images[filename];
+	imageMutex.unlock();
+	return ret;
+}
+
+
+
+bool collides_Texture(Rsm::Mesh* mesh, const blib::math::Ray &ray, glm::mat4 matrix)
+{
+	glm::mat4 newMatrix = matrix * mesh->renderer->matrix;
+	newMatrix = glm::inverse(newMatrix);
+	blib::math::Ray newRay = ray * newMatrix;
+
+
+	std::vector<glm::vec3> verts;
+	verts.resize(3);
+	float t;
+	for (size_t i = 0; i < mesh->faces.size(); i++)
+	{
+		for (size_t ii = 0; ii < 3; ii++)
+			verts[ii] = mesh->vertices[mesh->faces[i]->vertices[ii]];// glm::vec3(matrix * mesh->renderer->matrix * glm::vec4(mesh->vertices[mesh->faces[i]->vertices[ii]], 1));
+
+		if (newRay.LineIntersectPolygon(verts, t))
+		{
+			glm::vec3 hitPoint = newRay.origin + newRay.dir * t;
+			auto f1 = verts[0] - hitPoint;
+			auto f2 = verts[1] - hitPoint;
+			auto f3 = verts[2] - hitPoint;
+
+			float a = glm::length(glm::cross(verts[0] - verts[1], verts[0] - verts[2]));
+			float a1 = glm::length(glm::cross(f2, f3)) / a;
+			float a2 = glm::length(glm::cross(f3, f1)) / a;
+			float a3 = glm::length(glm::cross(f1, f2)) / a;
+
+			glm::vec2 uv1 = mesh->texCoords[mesh->faces[i]->texvertices[0]];
+			glm::vec2 uv2 = mesh->texCoords[mesh->faces[i]->texvertices[1]];
+			glm::vec2 uv3 = mesh->texCoords[mesh->faces[i]->texvertices[2]];
+			
+			glm::vec2 uv = uv1 * a1 + uv2 * a2 + uv3 * a3;
+			
+
+			Image* img = getImage("data/texture/" + mesh->model->textures[mesh->faces[i]->texIndex]);
+			if (img->get(uv) < 0.01)
+				continue;
+			return true;
+		}
+	}
+
+	for (size_t i = 0; i < mesh->children.size(); i++)
+	{
+		if (collides_Texture(mesh->children[i], ray, matrix))
+			return true;
+	}
+	return false;
+}
+
+
+
+
 bool collides_(Rsm::Mesh* mesh, const blib::math::Ray &ray, glm::mat4 matrix)
 {
 	glm::mat4 newMatrix = matrix * mesh->renderer->matrix;
@@ -600,6 +797,44 @@ bool Rsw::Model::collides(const blib::math::Ray &ray)
 	return true;
 }
 
+bool Rsw::Model::collidesTexture(const blib::math::Ray &ray)
+{
+	if (!aabb.hasRayCollision(ray, 0, 10000000))
+		return false;
+
+	return collides_Texture(model->rootMesh, ray, matrixCache);
+	return true;
+}
+
+void Rsw::Model::getWorldVerts(std::vector<int>& indices, std::vector<glm::vec3>& vertices)
+{
+	std::function<void(Rsm::Mesh*, glm::mat4 matrix)> gatherVerts;
+	gatherVerts = [&indices, &vertices, this, &gatherVerts](Rsm::Mesh* mesh, glm::mat4 matrix)
+	{
+		std::vector<glm::vec3> ret;
+
+		glm::mat4 newMatrix = matrix * mesh->renderer->matrix;
+
+		for (size_t i = 0; i < mesh->faces.size(); i++)
+		{
+			for (size_t ii = 0; ii < 3; ii++)
+			{
+				indices.push_back(vertices.size());
+				vertices.push_back(matrix * mesh->renderer->matrix * glm::vec4(mesh->vertices[mesh->faces[i]->vertices[ii]], 1));
+			}
+		}
+
+		for (size_t i = 0; i < mesh->children.size(); i++)
+		{
+			gatherVerts(mesh->children[i], matrix);
+		}
+
+	};
+	gatherVerts(model->rootMesh, matrixCache);
+}
+
+
+
 std::vector<glm::vec3> Rsw::Model::collisions(const blib::math::Ray &ray)
 {
 	if (!aabb.hasRayCollision(ray, 0, 10000000))
@@ -659,3 +894,17 @@ Rsw::QuadTreeNode::~QuadTreeNode()
 		if (children[i])
 			delete children[i];
 }
+
+
+float Rsw::Light::realRange()
+{
+	//formula from http://ogldev.atspace.co.uk/www/tutorial36/tutorial36.html and https://imdoingitwrong.wordpress.com/2011/01/31/light-attenuation/
+	float kC = 1;
+	float kL = 2.0f / range;
+	float kQ = 1.0f / (range * range);
+	float maxChannel = glm::max(glm::max(color.r, color.g), color.b);
+	float adjustedRange = (-kL + glm::sqrt(kL * kL - 4 * kQ * (kC - 128.0f * maxChannel * intensity))) / (2 * kQ);
+	return adjustedRange;
+}
+
+

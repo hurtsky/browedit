@@ -3,13 +3,14 @@
 #include "Rsw.h"
 #include "Gat.h"
 
+#include <blib/util/stb_image_create.h>
+#include <blib/util/stb_image.h>
 #include <blib/BackgroundTask.h>
 #include <blib/util/Log.h>
 using blib::util::Log;
 
+#include <fstream>
 
-#include <blib/util/stb_image_create.h>
-#include <blib/util/stb_image.h>
 
 
 Map::Map( const std::string &fileName )
@@ -156,6 +157,98 @@ void Map::loadHeightmap(const std::string &fileName)
 	stbi_image_free(data);
 }
 
+
+
+void Map::exportObj(const std::string &fileName)
+{
+	std::ofstream file(fileName);
+
+
+	for (int x = 0; x < gnd->width; x++)
+	{
+		for (int y = 0; y < gnd->height; y++)
+		{
+			auto cube = gnd->cubes[x][y];
+			file << "v " << (x + 0) * 10 << " " << -cube->heights[2] << " " << 10 * gnd->height - (y + 1) * 10 +10<< std::endl;
+			file << "v " << (x + 0) * 10 << " " << -cube->heights[0] << " " << 10 * gnd->height - (y + 0) * 10 +10<< std::endl;
+			file << "v " << (x + 1) * 10 << " " << -cube->heights[1] << " " << 10 * gnd->height - (y + 0) * 10 +10<< std::endl;
+			file << "v " << (x + 1) * 10 << " " << -cube->heights[3] << " " << 10 * gnd->height - (y + 1) * 10 +10<< std::endl;
+		}
+	}
+
+	for (int x = 0; x < gnd->width; x++)
+	{
+		for (int y = 0; y < gnd->height; y++)
+		{
+			if (gnd->cubes[x][y]->tileUp != -1)
+			{
+				file << "f ";
+				for (int i = 0; i < 4; i++)
+					file << (x + y * gnd->width) * 4 + i + 1 << " ";
+				file << std::endl;
+			}
+			if (gnd->cubes[x][y]->tileSide != -1)
+			{
+				file << "f ";
+				file << (x + y * gnd->width) * 4 + 2 + 1 << " ";
+				file << (x + y * gnd->width) * 4 + 3 + 1 << " ";
+				file << (x + (y+1) * gnd->width) * 4 + 0 + 1 << " ";
+				file << (x + (y+1) * gnd->width) * 4 + 1 + 1 << " ";
+				file << std::endl;
+			}
+
+			if (gnd->cubes[x][y]->tileFront != -1)
+			{
+				file << "f ";
+				file << (x + y * gnd->width) * 4 + 3 + 1 << " ";
+				file << (x + y * gnd->width) * 4 + 0 + 1 << " ";
+				file << ((x+1) + y * gnd->width) * 4 + 1 + 1 << " ";
+				file << ((x+1) + y * gnd->width) * 4 + 2 + 1 << " ";
+				file << std::endl;
+			}
+		}
+	}
+
+	int index = gnd->width * gnd->height * 4;
+	int currentIndex = index + 1;
+
+	for (auto o : rsw->objects)
+	{
+
+		if (o->type == Rsw::Object::Type::Model)
+		{
+			auto model = dynamic_cast<Rsw::Model*>(o);
+			std::vector<int> indices;
+			std::vector<glm::vec3> vertices;
+
+			model->getWorldVerts(indices, vertices);
+
+
+			for (const auto &v : vertices)
+			{
+				file << "v " << v.x << " " << v.y << " " << v.z << std::endl;
+			}
+
+			for (int i = 0; i < indices.size(); i+=3)
+			{
+				file << "f ";
+				for (int ii = 0; ii < 3; ii++)
+					file << (currentIndex + (i+ii)) << " ";
+				file << std::endl;
+			}
+			currentIndex += vertices.size();
+		}
+
+
+	}
+
+	
+}
+
+
+
+
+
 glm::vec4 Map::getHeightsAt(int x, int y)
 {
 	assert(inMap(x, y));
@@ -171,6 +264,20 @@ glm::vec4 Map::getHeightsAt(int x, int y)
 			ret[i] = gnd->cubes[x][y]->heights[0];
 	}
 	return glm::vec4(ret[0], ret[1], ret[2], ret[3]);
+}
+
+
+float Map::getHeightAt(float x, float y)
+{
+	int ix = (int)x;
+	int iy = (int)y;
+
+	if (!inMap(ix, iy))
+		return 0;
+
+	//TODO: use barycentric coordinats
+	Gnd::Cube* c = gnd->cubes[ix][iy];
+	return (c->h1 + c->h2 + c->h3 + c->h4) / 4.0f;
 }
 
 
